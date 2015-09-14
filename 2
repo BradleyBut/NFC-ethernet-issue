@@ -1,0 +1,453 @@
+#include <SPI.h>
+#include <PN532_SPI.h>
+#include "PN532_SPI.h"
+#include "PN532.h"
+#include "NfcAdapter.h"
+#include <Ethernet2.h>
+#include <SD.h>
+#include <Time.h>
+File idFromSdRead;
+byte fieldIndex = 0;
+unsigned long Main_Array[200] = {0};
+unsigned long globalID = 0;
+boolean acces = false;
+boolean CompareIdStart = false;
+boolean bufferId = true;
+boolean startRead = true;
+boolean notConnnected = true;
+const int ledr = 48;
+const int ledo = 46;
+const int ledg = 44;
+const int relai = 40;
+const int button = 42;
+int buttonState = 0;
+const int buttonPin = 42;
+unsigned long int id = 0;
+int counter = 0;
+int counterAttempts = 0;
+
+PN532_SPI interface(SPI, 9);
+NfcAdapter nfc = NfcAdapter(interface);
+#define SCK  52
+#define MOSI 51
+#define MISO 50
+#define SS 53
+#define ETH_SS 10
+#define NFC_SS 9
+
+
+
+////////////////////////////////////////////////////////////////////////
+//CONFIGURE
+////////////////////////////////////////////////////////////////////////
+byte server[] = {
+  131, 180, 122, 151
+}; //ip Address of the server you will connect to .50
+
+//The location to go to on the server
+//make sure to keep HTTP/1.0 at the end, this is telling it what type of file it is
+const String location = "/nfc/RFID_ids_dasml.aspx?id=49 HTTP/1.0"; //"/NFC/index.htm HTTP/1.0";
+
+
+// if need to change the MAC address
+byte mac[] = {0x90, 0xA2, 0xDA, 0x0F, 0xF6, 0x2F};
+IPAddress ip(131, 180, 92, 136);
+////////////////////////////////////////////////////////////////////////
+
+EthernetClient client;
+
+char idsFromServer[3000] = {0}; // string for incoming serial data
+int idsFromServerPOS = 0; // string index counter
+boolean startRead2 = false; // is reading?
+File idToSd;
+const int timer = 1000;
+boolean dataOpgehaaldVanServer = false;
+
+
+
+
+void setup() 
+{
+  pinMode(buttonPin, INPUT);
+  pinMode(ledr, OUTPUT);
+  digitalWrite(ledr, HIGH);
+  pinMode(ledo, OUTPUT);
+  pinMode(ledg, OUTPUT);
+  pinMode(10, OUTPUT);
+  pinMode(9, OUTPUT);
+  pinMode(relai, OUTPUT);
+  pinMode(button, INPUT);
+  pinMode(53, OUTPUT);
+  Serial.begin(9600);
+  delay(1000);
+  SD.begin(4);
+  delay(1000);
+  Ethernet.begin(mac, ip);
+  delay(1000);
+  nfc.begin();
+ 
+  String pageValue = connectAndRead(); //connect to the server and read the output
+  Serial.println(pageValue); //print out the findings.
+  delay(5000); //wait 5 seconds before connecting again
+}
+
+String connectAndRead() 
+{
+  
+  //connect to the server
+  Serial.println("connecting...");
+  counterAttempts++;
+  //port 80 is typical of a www page
+
+  while (notConnnected)
+  {
+    
+    if (client.connect(server, 80)) 
+    {
+      Serial.println("connected"); //Connected - Read the page
+      counterAttempts = 0;
+      client.print("GET ");
+      client.println(location);
+      Serial.println(location);
+      client.println();
+      notConnnected = false;
+      return readPage(); //go and read the output
+    }
+    
+    else 
+     {
+      delay(5000);
+      Serial.println("Connection failed.");
+      
+      if (counterAttempts <= 100)
+         {
+        Serial.println("To many attempts.");
+        bufferId = true;
+        counter = 30;
+        return nfcBuffer();
+         }
+     }  
+
+  }
+}
+String readPage() 
+{
+
+  idsFromServerPOS = 0;
+  memset( &idsFromServer, 0, 2048 );
+
+  while (true) 
+  {
+
+    if (client.available()) 
+    {
+    char c = client.read();
+    Serial.print(c);
+    
+      if (c == '[' ) 
+         {
+         startRead2 = true;
+         }
+    
+      else if (startRead2) 
+       {
+
+        if (c != ']') 
+          {
+          idsFromServer[idsFromServerPOS] = c;
+          idsFromServerPOS ++; // lees data per character
+          Serial.print(idsFromServer[idsFromServerPOS]);
+          dataOpgehaaldVanServer = true;
+          if (c == '\n') 
+             {
+            counter++;
+             }
+          }
+          
+        else 
+        {
+          Serial.println("disconnecting.");
+          client.stop();
+          client.flush();
+          Serial.print("connection state=");
+          Serial.println(client.connected());
+
+          if (!client.connected()) {
+            Serial.println();
+            Serial.println("disconnecting second attempt.");
+            client.stop();
+            digitalWrite(10, HIGH);
+            Serial.print("connection state2=");
+            Serial.println(client.connected());
+          }
+        }
+        if (c == ']') 
+        {
+          SD.begin(4);
+          delay(timer);
+          SD.remove("IDS.txt");// verwijder oude Id's
+          Serial.println("Id to SD");
+          idToSd = SD.open("IDS.txt", FILE_WRITE);
+          idToSd.seek(0);
+          idToSd.println(idsFromServer);
+          delay(timer);
+          idToSd.close();
+          Serial.println("Id to Serial");
+          Serial.print(idsFromServer);
+          bufferId = true;
+
+          Serial.println("connection check1");
+          Serial.println(client.connected());
+          return idsFromServer;
+        }
+
+
+      }
+    }
+
+  }
+
+
+
+
+}
+
+
+String nfcBuffer()
+{
+
+  Serial.println("id backup");
+  Serial.println("connection check2");
+  Serial.println(client.connected());
+  buttonState = digitalRead(buttonPin);
+  digitalWrite(ledr, HIGH);
+  if (bufferId == true)
+  {
+   // SD.begin(4);
+    idFromSdRead = SD.open("IDS.txt", FILE_READ);
+
+    while (idFromSdRead.available()) 
+    {
+      Serial.println("sd open");
+      Serial.println("counter value=");
+      Serial.println(counter);
+      for (int i = 0; i <= counter; i++) 
+      {
+
+        Main_Array[i] = idFromSdRead.parseInt();
+        Serial.println(Main_Array[i]);
+      }
+      idFromSdRead.close();
+      CompareIdStart = true;
+      bufferId = false;
+    }
+  }
+}
+
+int CompareId()
+{
+
+  Serial.println("connection check3");
+  Serial.println(client.connected());
+  if (startRead == true)
+  {
+    buttonState = digitalRead(buttonPin);
+    digitalWrite(ledr, LOW);
+    {
+      //SPI.setDataMode(SPI_MODE1);
+      Serial.println("connection check before nfc.begin");
+      Serial.println(client.connected());
+      //nfc.begin();
+      Serial.println("connection check after nfc.begin");
+      Serial.println(client.connected());
+
+      Serial.println("in loop");
+      Serial.println(id);
+      if (nfc.tagPresent())
+      {
+        id = 0;
+        Serial.println("ID =");
+        NfcTag tag = nfc.read();
+        String scannedUID = tag.getUidString();
+        String idString1 = scannedUID.substring(0, 2);
+        String idString2 = scannedUID.substring(3, 5);
+        String idString3 = scannedUID.substring(6, 8);
+        String idString4 = scannedUID.substring(9, 11);
+        String idString5 = scannedUID.substring(12, 14);
+        String idString6 = scannedUID.substring(15, 17);
+        String idString7 = scannedUID.substring(18, 20);
+        id = 400000000 - ((idString1.toInt() * 125009) + (idString2.toInt() * 4600) + (idString3.toInt() * 1540) + (idString4.toInt() * 23) + (idString5.toInt() * 112) + (idString6.toInt() * 10953) + (idString7.toInt() * 1405));
+        Serial.println(id);
+        globalID = id;
+
+        for (int i = 0; i <= counter; i++)
+        {
+          Serial.println("debug in for loop");
+          Serial.println(Main_Array[i]);
+          if (Main_Array[i] == id && buttonState == HIGH)
+          {
+            Serial.println("connection check4");
+            Serial.println(client.connected());
+            Serial.println("acces granted");
+            acces = true;
+            startRead = false;
+            digitalWrite(ledr, LOW);
+            digitalWrite(ledg, HIGH);
+            digitalWrite(relai, HIGH);
+            delay(250);
+            digitalWrite(ledg, LOW);
+            delay(75);
+            digitalWrite(ledg, HIGH);
+            delay(75);
+            digitalWrite(ledg, LOW);
+            delay(75);
+            digitalWrite(ledg, HIGH);
+            delay(75);
+            digitalWrite(ledg, LOW);
+            digitalWrite(ledo, HIGH);
+
+            break;
+          }
+          else {
+            acces = false;
+            digitalWrite(relai, LOW);
+          }
+        }
+        if (acces == false && id != 0)
+        {
+          digitalWrite(ledr, HIGH);
+          delay(100);
+          digitalWrite(ledr, LOW);
+
+        }
+      }
+    }
+
+  }
+}
+
+
+
+
+
+
+int returnId() 
+{
+
+  // SPI.setDataMode(SPI_MODE2);
+  Serial.println("connection check in returnID");
+  Serial.println(client.connected());
+
+  Ethernet.begin(mac, ip);
+  while (counterAttempts <= 100)
+  {
+    Serial.println("connecting...");
+    counterAttempts++;
+    Serial.println(counterAttempts);
+    client.connect({131, 180, 122, 151}, 80);
+
+    while (notConnnected)
+    {
+      Serial.println("connection check while not connected");
+      Serial.println(client.connected());
+      
+      if (client.connect({131, 180, 122, 151}, 80)) 
+      {
+        Serial.println("connected");
+        client.print("GET ");
+        Serial.println("GET ");
+        client.println("/nfc/rfid_registratie.aspx?id=49");
+        Serial.println("/nfc/rfid_registratie.aspx?id=49");
+        client.print("&rfid=");
+        Serial.print("&rfid=");
+        client.print(globalID);
+        Serial.println(globalID);
+        client.print("&time=");
+        client.print(now());
+        Serial.println(now());
+        client.println();
+        notConnnected = false;
+
+
+
+      }
+      else {
+        delay(5000);
+        Serial.println("connection failed");
+        if (counterAttempts <= 100)
+        {
+          Serial.println("to many attempts");
+          digitalWrite(ledr, HIGH);
+          delay(300);
+          digitalWrite(ledr, LOW);
+          delay(300);
+          digitalWrite(ledr, HIGH);
+          delay(300);
+          digitalWrite(ledr, LOW);
+          delay(300);
+          digitalWrite(ledr, HIGH);
+          delay(300);
+          digitalWrite(ledr, LOW);
+          delay(300);
+          digitalWrite(ledr, HIGH);
+          delay(300);
+          digitalWrite(ledr, LOW);
+          return CompareId();
+        }
+      }
+    }
+
+  }
+}
+
+
+
+
+
+
+
+
+
+void loop()
+{
+
+  digitalWrite(ledr, LOW);
+  digitalWrite(ledg, HIGH);
+  Serial.println("in loop");
+  buttonState = digitalRead(buttonPin);
+  Serial.println(buttonState);
+  if (bufferId == true)
+  {
+
+    Serial.println("NFC buffer program");
+    nfcBuffer();
+  }
+
+  if (CompareIdStart == true && startRead == true)
+  {
+
+    Serial.println("compare ID program");
+    CompareId();
+  }
+
+  else if (buttonState == LOW) // microswitch
+  {
+
+    Serial.println("logging out");
+    counterAttempts = 0;
+    notConnnected = true;
+    acces = false;
+    digitalWrite(ledo, LOW);
+    startRead = true;
+    digitalWrite(relai, LOW);
+    returnId();
+
+
+  }
+
+
+}
+
+
+
+
