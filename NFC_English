@@ -41,7 +41,7 @@ NfcAdapter nfc = NfcAdapter(interface);
 //CONFIGURE
 ////////////////////////////////////////////////////////////////////////
 byte server[] = {
-  131, 180, 122, 151
+  132.0.0.0
 }; //ip Address of the server you will connect to .50
 
 //The location to go to on the server
